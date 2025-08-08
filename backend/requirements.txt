@@ -1,0 +1,6 @@
+opencv-python-headless
+fastapi
+face-recognition
+cmake
+python-multipart
+uvicorn
