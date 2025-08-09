@@ -17,40 +17,49 @@ from test_ import test
 import numpy as np
 from src.anti_spoof_predict import AntiSpoofPredict
 
-ATTENDANCE_LOG_DIR = './logs'
-DB_PATH = './db'
-for dir_ in [ATTENDANCE_LOG_DIR, DB_PATH]:
-    if not os.path.exists(dir_):
-        os.mkdir(dir_)
+ATTENDANCE_LOG_DIR = './logs'                        # Относительный путь к папке logs В этой директории будут храниться CSV-файлы учёта посещаемости.
+DB_PATH = './db'                                     # Относительный путь к папке db.  В этой директории будут храниться изображения и эмбеддинги (.png и .pickle) 
+for dir_ in [ATTENDANCE_LOG_DIR, DB_PATH]:           # цикл по двум путям: './logs' и './db'.
+    if not os.path.exists(dir_):                     # Ставим условия и проверяем есть ли у нас папки logs db где мы будем хранить фотграфии и логи
+        os.mkdir(dir_)                               # Если этих файлов нет, то создаем такие же папки с такими же именами logs и db
 
-app = FastAPI()
+app = FastApi()                                      # Создаем наш API
 
-origins = ["*"]
+origins = ["*"]                                      # Указываем эти конфигурации чтобы у всех была возможность посетить наш APi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,                           # Список доменов, которым разрешён доступ
+    allow_credentials=True,                          # Разрешаем передачу cookies/авторизационных заголовков
+    allow_methods=["*"],                             # Разрешаем любые HTTP-методы (GET, POST, PUT, DELETE )
+    allow_headers=["*"],                             # Разрешаем любые заголовки в запросах
 )
 
-@app.post("/login")
-async def login(file: UploadFile = File(...)):
+@app.post("/login")                                     # Первый эндпоинт нашего кода, регистрируем функцию login как обработчик POST-запросов по пути /login.
+async def login(file: UploadFile = File(...)):          # Создаем асинхронную функцию login(file: - имя параметра эндпоинта, 
+                                                        #                                то есть ключ по которому FastAPI найдёт загруженный файл.
+                                                        #                      UploadFile- это способ принять загружаемый файл который не хранит данные файлов в паямти
+                                                        #                       File() - вытаскивает файл, то есть идет в тело запроса, Ищет поле с file 
+                                                        #                                 и Преобразует это поле в объект UploadFile и передаёт его в функцию) 
+                                                        #                       ... внутри File означает что ОБЯЗАТЕЛЬНО принимать файл, если без то вернет None
     # Считываем изображение из байтов
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
+    contents = await file.read()                        # Считываем содержимое файла 
+    nparr = np.frombuffer(contents, np.uint8)           # np.frombuffer создаёт массив NumPy( contents считанный файл, 
+                                                        #                                    np.uint8 указывает тип элементов — 8-битное беззнаковое целое )
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)         # cv2.imdecode() — функция OpenCV, которая умеет переводить массив байтов в полноценное изображение.
+                                                        # cv2.imdecode(nparr наш массив байтов, cv2.IMREAD_COLOR переводим всё дело в цветнное изображение BGR)
     # Приведение к 4:3 — например, 640x480
-    img_resized = cv2.resize(img, (640, 480))
+    img_resized = cv2.resize(img, (640, 480))          # Делаем ресайз изображения потому что модель обучена на изображениях 4:3
 
     # Сохраняем во временный файл
-    temp_filename = f"{uuid.uuid4()}.png"
-    cv2.imwrite(temp_filename, img_resized)
+    temp_filename = f"{uuid.uuid4()}.png"              # Формируем f строку с uuid.uuid4() — функция из модуля uuid, 
+                                                       # которая генерирует случайный UUID (универсальный уникальный идентификатор) в .png формате 
+    cv2.imwrite(temp_filename, img_resized)            # Записываем файл и соединяем уникальный адрес в png и сам ресайз изображение 
+                                                       # то есть этот уникальный адрес содерижит наше изорбажение которое нам нужно будет для антиспуфинга
 
     # Передаём путь в антиспуфинг
-    label, confidence = test(
+    label, confidence = test(                          # Передаем нашу функцию из test.py test() указываем путь к нашему файлу уникальному, модель спуфинга 
+                                                       # и указываем что будем использовать GPU, если нету то CPU можно поставить -1 чтобы только на CPU
         image_path=temp_filename,
         model_dir="./resources/anti_spoof_models",
         device_id=0
@@ -58,25 +67,26 @@ async def login(file: UploadFile = File(...)):
 
     # Если лицо — не подделка
     if label == 1:
-        user_name, match_status = recognize(cv2.imread(temp_filename))
-
+        user_name, match_status = recognize(cv2.imread(temp_filename))            # recognise возвращает 2 значение строковый идентификатор (имя) и булевое значение
+                                                                                  # найдено ли совпадение или нет. cv2.imread(temp_filename) считываем  наше изображение
         if match_status:
-            epoch_time = time.time()
-            date = time.strftime('%Y%m%d', time.localtime(epoch_time))
-            with open(os.path.join(ATTENDANCE_LOG_DIR, f"{date}.csv"), 'a') as f:
-                f.write(f"{user_name},{datetime.datetime.now()},IN\n")
+            epoch_time = time.time()                                              # Берем текущее время в секундах
+            date = time.strftime('%Y%m%d', time.localtime(epoch_time))            # форматирует локальное время в строку даты вида YYYYMMDD (например, 20250809).
+            with open(os.path.join(ATTENDANCE_LOG_DIR, f"{date}.csv"), 'a') as f: # создаем лог в папке logs ./logs/<YYYYMMDD>.csv сохраняем как f
+                f.write(f"{user_name},{datetime.datetime.now()},IN\n")            # добавляем строку имя пользователя + время и маркировка вход или выход тут вход(IN)
         else:
-            user_name = "unknown_person"
+            user_name = "unknown_person"                                          # Здесь журнал не пишется, просто подготавливается ответ
+                                                                             #если распознавание не прошло то пользователь unknown_person, а совпадение 0, то есть False
             match_status = False
     else:
-        user_name = "spoof_detected"
+        user_name = "spoof_detected"                                       # если антиспуфинг распознал подделку (не живое лицо). Не записываем в журнал
         match_status = False
 
     # Удалим временное изображение
-    os.remove(temp_filename)
+    os.remove(temp_filename)                                               # Удалим временное изображение
 
     return {
-        "user": user_name,
+        "user": user_name,                                                 # Возвращаем имя пользователя, совпадения и вероятность антиспуфинга
         "match_status": match_status,
         "confidence": float(confidence)
     }
@@ -182,7 +192,3 @@ def recognize(img):
         return db_dir[j - 1][:-7], True
     else:
         return 'unknown_person', False
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
