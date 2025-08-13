@@ -98,10 +98,12 @@ async def logout(file: UploadFile = File(...)):
     contents = await file.read()
 
     # example of how you can save the file
-    with open(file.filename, "wb") as f:
-        f.write(contents)
+    with open(file.filename, "wb") as f:                            # Открываем файл пользователя берем название файла и открываем для записи, если файл существует
+                                                                        # обрезать (truncate) до нуля, если не существует — создать и записали как f
+        f.write(contents)                                            # Записывает в открытый файл байты из переменной contents
 
-    user_name, match_status = recognize(cv2.imread(file.filename))
+    user_name, match_status = recognize(cv2.imread(file.filename))       # recognise возвращает 2 значение строковый идентификатор (имя) и булевое значение
+                                                                    # найдено ли совпадение или нет. cv2.imread(file.filename) считываем  наше изображение
 
     if match_status:
         epoch_time = time.time()
@@ -110,7 +112,7 @@ async def logout(file: UploadFile = File(...)):
             f.write('{},{},{}\n'.format(user_name, datetime.datetime.now(), 'OUT'))
             f.close()
 
-    return {'user': user_name, 'match_status': match_status}
+    return {'user': user_name, 'match_status': match_status}            # Возвращаем имя пользователя и совпадения
 
 
 @app.post("/register_new_user")
@@ -124,30 +126,36 @@ async def register_new_user(file: UploadFile = File(...), text: str = None):
         f.write(contents)
 
     # Дублируем изображение в базу
-    shutil.copy(file.filename, os.path.join(DB_PATH, f'{text}.png'))
+    shutil.copy(file.filename, os.path.join(DB_PATH, f'{text}.png')) # Берёт файл, который вы только что сохранили на диск под именем file.filename 
+                                                                                                                                    # (это имя пришло от клиента).
+                                                                      # Копирует его в каталог DB_PATH (./db) под именем <text>.png.
+                                                                     #  В результате в ./db появляется визуальная копия регистрационного изображения
 
     # Считываем изображение и переводим его в RGB (важно!)
     img_bgr = cv2.imread(file.filename)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
     # Получаем эмбеддинги
-    embeddings = face_recognition.face_encodings(img_rgb)
+    embeddings = face_recognition.face_encodings(img_rgb)          # На вход подаётся RGB-изображение; под капотом сначала находятся лица, 
+                                                                     #     затем для каждого строится вектор признаков (эмбеддинг).
+                                                                # Результат — список эмбеддингов (list[np.ndarray]), по одному на каждое найденное лицо
 
     # Если лицо не найдено
-    if len(embeddings) == 0:
+    if len(embeddings) == 0:                                       # если длина embeddings = 0 удаляем файл и возвращаем сообщение No face detected
         os.remove(file.filename)
         return {'registration_status': 400, 'message': 'No face detected'}
 
     # Сохраняем эмбеддинги в файл
-    with open(os.path.join(DB_PATH, f'{text}.pickle'), 'wb') as file_:
+    with open(os.path.join(DB_PATH, f'{text}.pickle'), 'wb') as file_:      # если всё ок то сохраняем эмбединги и сам файл под названием pickle 
+                                                                              # и переводим его в pickle
         pickle.dump(embeddings, file_)
 
     print(file.filename, text)
 
     # Удаляем временный файл
     os.remove(file.filename)
-
-    return {'registration_status': 200}
+ 
+    return {'registration_status': 200}                                 # признак успешной регистрации
 
 
 
@@ -156,39 +164,54 @@ async def get_attendance_logs():
 
     filename = 'out.zip'
 
-    shutil.make_archive(filename[:-4], 'zip', ATTENDANCE_LOG_DIR)
+    shutil.make_archive(filename[:-4], 'zip', ATTENDANCE_LOG_DIR)        # filename[:-4] — отрезает .zip и остаётся out.
+                                                                         #shutil.make_archive('out', 'zip', ATTENDANCE_LOG_DIR):
+                                                                              #создаёт ZIP-архив с именем out.zip;
+                                                                               #в архив помещает весь каталог ATTENDANCE_LOG_DIR ( ./logs);
+                                                                                 #структура архива будет соответствовать содержимому ./logs — все CSV за разные даты.
 
-    ##return File(filename, filename=filename, content_type="application/zip", as_attachment=True)
-    return starlette.responses.FileResponse(filename, media_type='application/zip',filename=filename)
+   ## return File(filename, filename=filename, content_type="application/zip", as_attachment=True)
+    return starlette.responses.FileResponse(filename, media_type='application/zip',filename=filename) #Используется FileResponse из Starlette для отправки файла клиенту.
+                                                                                                     # filename — путь к файлу (out.zip), который нужно отдать.
+                                                                                        #media_type='application/zip' — MIME-тип, сообщающий клиенту, что это ZIP-архив.
+                                                                            #filename=filename (в параметрах ответа) — имя, под которым браузер предложит сохранить файл.
 
 
 def recognize(img):
     # it is assumed there will be at most 1 match in the db
 
-    embeddings_unknown = face_recognition.face_encodings(img)
-    if len(embeddings_unknown) == 0:
-        return 'no_persons_found', False
-    else:
+    embeddings_unknown = face_recognition.face_encodings(img)         # извлекает эмбеддинги для всех найденных лиц в изображении img (ожидается формат RGB
+    if len(embeddings_unknown) == 0:                                  # Если лиц нет (len(...) == 0), сразу возвращает кортеж:
+        return 'no_persons_found', False                              # 'no_persons_found' — метка для ответа; False — флаг “нет совпадения”.
+    else:                                                              # Если хотя бы одно лицо найдено — берётся только первое ([0]) в списке.
         embeddings_unknown = embeddings_unknown[0]
 
-    match = False
-    j = 0
+    match = False                                                      # match — флаг, найдено ли совпадение.
+    j = 0                                                                # j — индекс текущего пользователя в списке базы
 
-    db_dir = sorted([j for j in os.listdir(DB_PATH) if j.endswith('.pickle')])
-    # db_dir = sorted(os.listdir(DB_PATH))    
-    print(db_dir)
-    while ((not match) and (j < len(db_dir))):
+    db_dir = sorted([j for j in os.listdir(DB_PATH) if j.endswith('.pickle')]) # os.listdir(DB_PATH) — получает список всех файлов в папке ./db.
+                                                                              # Фильтруются только .pickle — это файлы с сохранёнными эмбеддингами пользователей.
+                                                                             # Список сортируется по имени файла (алфавитно).
+                                                                         # Пример: ['ivan_petrov.pickle', 'sergey_ivanov.pickle'].
+    print(db_dir)                                                      # print(db_dir) — вывод списка в консоль для отладки.    
+  
+    while ((not match) and (j < len(db_dir))):            # Цикл перебирает все .pickle в базе, пока не найдено совпадение (not match) и пока не пройдены все файлы.
+        path_ = os.path.join(DB_PATH, db_dir[j])          #path_ — полный путь до текущего .pickle.
 
-        path_ = os.path.join(DB_PATH, db_dir[j])
+        file = open(path_, 'rb')                        #Файл открывается в бинарном режиме ('rb').
+        embeddings = pickle.load(file)[0]           #  pickle.load(file) загружает список эмбеддингов, сохранённый при регистрации.
 
-        file = open(path_, 'rb')
-        embeddings = pickle.load(file)[0]
+        match = face_recognition.compare_faces([embeddings], embeddings_unknown)[0] [0] # берёт первый эмбеддинг пользователя (даже если в файле их несколько).
+                                        # face_recognition.compare_faces([embeddings], embeddings_unknown) возвращает список булевых значений, одно на каждое сравнение.
+                                        # Здесь сравнивается один эталон с одним неизвестным.
+                                       #[0] извлекает булево значение первого (и единственного) сравнения.
 
-        match = face_recognition.compare_faces([embeddings], embeddings_unknown)[0]
+        j += 1                    # Если match == True, цикл завершится на следующей проверке условия; если нет, j увеличивается и цикл продолжается.
 
-        j += 1
-
-    if match:
+    if match:                                        #db_dir[j - 1] — имя .pickle файла, в котором нашли совпадение.
+                                  #[:-7] отрезает последние 7 символов (точка + слово "pickle") → остаётся чистое имя пользователя, под которым он был зарегистрирован.
+                                              #Возвращается (имя_пользователя, True).
+                                                #Если совпадения нет — ( 'unknown_person', False ).
         return db_dir[j - 1][:-7], True
     else:
         return 'unknown_person', False
